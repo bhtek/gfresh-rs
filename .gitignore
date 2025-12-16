@@ -1,0 +1,17 @@
+### Rust / Cargo
+/target/
+**/*.rs.bk
+
+### OS/editor junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+### Local env/config
+.env
+.env.*
+
+### bd issue tracker
+.beads/

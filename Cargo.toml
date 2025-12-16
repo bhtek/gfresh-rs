@@ -1,0 +1,9 @@
+[package]
+name = "gfresh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+atty = "0.2"
+owo-colors = { version = "4.0", default-features = true }
