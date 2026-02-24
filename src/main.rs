@@ -17,6 +17,41 @@ use anyhow::{bail, Result};
 use owo_colors::OwoColorize;
 use std::process::ExitCode;
 
+/// Ensures we're on the specified branch, switching to it if necessary.
+fn ensure_on_branch(main_branch: &str, palette: &ui::Palette) -> Result<()> {
+    let current_branch = git::current_branch().unwrap_or_else(|_| "HEAD".to_string());
+
+    if current_branch != "HEAD" && current_branch != main_branch {
+        eprintln!(
+            "{} {} -> {}",
+            palette.info("Switching branches:"),
+            current_branch,
+            main_branch
+        );
+        git::checkout_branch(main_branch)?;
+    } else if current_branch == "HEAD" {
+        eprintln!(
+            "{} {}",
+            palette.warn("Detached HEAD; checking out"),
+            main_branch.bold()
+        );
+        git::checkout_branch(main_branch)?;
+    }
+
+    Ok(())
+}
+
+/// Prints an ahead/behind summary line with a label.
+fn print_ahead_behind(label: &str, ahead: Option<u32>, behind: Option<u32>, palette: &ui::Palette) {
+    eprintln!(
+        "{} {} ahead / {} behind ({})",
+        palette.info("Ahead/behind:"),
+        palette.good_opt(ahead),
+        palette.good_opt(behind),
+        label
+    );
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -65,23 +100,7 @@ fn run() -> Result<()> {
         main_branch.bold()
     );
 
-    let current_branch = git::current_branch().unwrap_or_else(|_| "HEAD".to_string());
-    if current_branch != "HEAD" && current_branch != main_branch {
-        eprintln!(
-            "{} {} -> {}",
-            palette.info("Switching branches:"),
-            current_branch,
-            main_branch
-        );
-        git::checkout_branch(&main_branch)?;
-    } else if current_branch == "HEAD" {
-        eprintln!(
-            "{} {}",
-            palette.warn("Detached HEAD; checking out"),
-            main_branch.bold()
-        );
-        git::checkout_branch(&main_branch)?;
-    }
+    ensure_on_branch(&main_branch, &palette)?;
 
     let remote_ref = format!("origin/{main_branch}");
     let before_counts = git::ahead_behind("HEAD", &remote_ref).ok();
@@ -95,18 +114,8 @@ fn run() -> Result<()> {
 
     let (ahead, behind) = git::ahead_behind("HEAD", &remote_ref)?;
 
-    eprintln!(
-        "{} {} ahead / {} behind (before)",
-        palette.info("Ahead/behind:"),
-        format_count_opt(before_counts.map(|c| c.0), palette.enabled),
-        format_count_opt(before_counts.map(|c| c.1), palette.enabled)
-    );
-    eprintln!(
-        "{} {} ahead / {} behind (after fetch)",
-        palette.info("Ahead/behind:"),
-        palette.good(ahead),
-        palette.good(behind)
-    );
+    print_ahead_behind("before", before_counts.map(|c| c.0), before_counts.map(|c| c.1), &palette);
+    print_ahead_behind("after fetch", Some(ahead), Some(behind), &palette);
     eprintln!(
         "{} {} commits to integrate (rebase)",
         palette.info("Sync summary:"),
@@ -120,12 +129,7 @@ fn run() -> Result<()> {
         git::run_git(&["rebase", &remote_ref])?;
     }
     let after_rebase_counts = git::ahead_behind("HEAD", &remote_ref)?;
-    eprintln!(
-        "{} {} ahead / {} behind (post-rebase)",
-        palette.info("Ahead/behind:"),
-        palette.good(after_rebase_counts.0),
-        palette.good(after_rebase_counts.1)
-    );
+    print_ahead_behind("post-rebase", Some(after_rebase_counts.0), Some(after_rebase_counts.1), &palette);
 
     let cleaned = git::delete_stale_branches(&main_branch)?;
     if cleaned.is_empty() {
@@ -143,17 +147,4 @@ fn run() -> Result<()> {
     println!("{recent}");
 
     Ok(())
-}
-
-fn format_count_opt(count: Option<u32>, colored: bool) -> String {
-    match count {
-        Some(value) => {
-            if colored {
-                format!("{}", value.green())
-            } else {
-                value.to_string()
-            }
-        }
-        None => "n/a".to_string(),
-    }
 }

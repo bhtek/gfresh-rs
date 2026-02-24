@@ -39,4 +39,11 @@ impl Palette {
             msg.to_string()
         }
     }
+
+    pub(crate) fn good_opt<T: std::fmt::Display>(&self, msg: Option<T>) -> String {
+        match msg {
+            Some(value) => self.good(value),
+            None => "n/a".to_string(),
+        }
+    }
 }

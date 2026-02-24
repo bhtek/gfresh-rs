@@ -2,6 +2,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+const MAIN_BRANCH_CANDIDATES: &[&str] = &["main", "develop", "master"];
+
 static DEBUG: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn set_debug(enabled: bool) {
@@ -31,19 +33,25 @@ pub(crate) fn run_git(args: &[&str]) -> Result<String> {
     Ok(stdout.trim_end().to_string())
 }
 
-pub(crate) fn ensure_git_repo() -> Result<()> {
+/// Runs a git command and returns true if successful, false if it failed.
+/// Useful for probes where we only care about exit status, not stdout.
+fn run_git_quiet(args: &[&str]) -> Result<bool> {
+    debug_log(format!("git {}", args.join(" ")));
     let output = Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
+        .args(args)
         .env("GIT_PAGER", "")
         .output()
-        .context("failed to check whether this is a git repository")?;
+        .with_context(|| format!("failed to run git {}", args.join(" ")))?;
+    Ok(output.status.success())
+}
 
-    if !output.status.success() {
+pub(crate) fn ensure_git_repo() -> Result<()> {
+    if !run_git_quiet(&["rev-parse", "--is-inside-work-tree"])? {
         bail!("not inside a git work tree (run gfresh from within a repository)");
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.trim() != "true" {
+    let stdout = run_git(&["rev-parse", "--is-inside-work-tree"])?;
+    if stdout != "true" {
         bail!("not inside a git work tree (run gfresh from within a repository)");
     }
 
@@ -51,16 +59,10 @@ pub(crate) fn ensure_git_repo() -> Result<()> {
 }
 
 pub(crate) fn ensure_remote(remote: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", remote])
-        .env("GIT_PAGER", "")
-        .output()
-        .with_context(|| format!("failed to check for remote '{remote}'"))?;
-
-    if !output.status.success() {
+    let args = ["remote", "get-url", remote];
+    if !run_git_quiet(&args)? {
         bail!("no remote named '{remote}' is configured");
     }
-
     Ok(())
 }
 
@@ -79,36 +81,28 @@ pub(crate) fn detect_main_branch() -> Result<String> {
         return Ok(branch);
     }
 
-    for candidate in ["main", "develop", "master"] {
+    for candidate in MAIN_BRANCH_CANDIDATES {
         if local_branch_exists(candidate)? || origin_branch_exists(candidate)? {
             return Ok(candidate.to_string());
         }
     }
-    bail!("Could not find a main branch (tried main/develop/master)");
+    bail!(
+        "Could not find a main branch (tried {})",
+        MAIN_BRANCH_CANDIDATES.join("/")
+    );
 }
 
 fn origin_default_branch() -> Result<Option<String>> {
-    let output = Command::new("git")
-        .args(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-        .env("GIT_PAGER", "")
-        .output()
-        .context("failed to read origin default branch")?;
-
-    if !output.status.success() {
+    if !run_git_quiet(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])? {
         return Ok(None);
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git(&["symbolic-ref", "refs/remotes/origin/HEAD"])?;
     Ok(parse_origin_head_ref(&stdout))
 }
 
 fn git_ref_exists(name: &str) -> Result<bool> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", "--quiet", name])
-        .env("GIT_PAGER", "")
-        .output()
-        .with_context(|| format!("failed to probe ref {name}"))?;
-    Ok(output.status.success())
+    run_git_quiet(&["rev-parse", "--verify", "--quiet", name])
 }
 
 fn local_branch_exists(name: &str) -> Result<bool> {
